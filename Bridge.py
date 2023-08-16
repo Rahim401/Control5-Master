@@ -1,14 +1,15 @@
 
 
 from time import sleep,time
-from utils import toBcAddress
+from utils import toBcAddress,recvFull
 from random import randbytes,randint
 from threading import Thread,current_thread
-from socket import socket,AF_INET,SOCK_DGRAM,SOCK_STREAM,timeout
+from socket import socket,AF_INET,SOCK_DGRAM,SOCK_STREAM,timeout,MSG_WAITALL
 from socket import getaddrinfo,gethostname,getnameinfo,if_nameindex,gethostbyname_ex,gethostbyname
 
 class MasterBridge:
     MainPort = 32654
+    DataPort = MainPort+1
     HostName = gethostname()
     Nw2Scan = ()
 
@@ -18,7 +19,8 @@ class MasterBridge:
     InterBy4 = Inter / 4
 
     def __init__(self):
-        self.mainSkLane = socket(AF_INET,SOCK_DGRAM)
+        self.mainDSkLane = socket(AF_INET, SOCK_DGRAM)
+        self.dataSSkLane = None
         self.isAlive = False
         self.workerAddr = None
 
@@ -37,46 +39,58 @@ class MasterBridge:
 
     def searchForWorker(self):
         workerLst = set()
-        scanPack = bytes((0,0,randint(0,255),0,0))
+        scanPack = bytes((0,0,randint(0,255),0,0,0))
 
         self.updateScanAddr()
-        self.mainSkLane.settimeout(0.1)
+        self.mainDSkLane.settimeout(0.1)
         for _ in range(MasterBridge.RepeatScan):
             try:
                 for nwAddr in MasterBridge.Nw2Scan:
-                    self.mainSkLane.sendto(
+                    self.mainDSkLane.sendto(
                         scanPack,
                         (nwAddr, MasterBridge.MainPort)
                     )
-                data,addr = self.mainSkLane.recvfrom(MasterBridge.InitSize)
+                data,addr = self.mainDSkLane.recvfrom(6)
                 if data[:3]==scanPack[:3]:
                     workerLst.add(addr[0])
             except timeout:
                 pass
-        self.mainSkLane.settimeout(0)
+        self.mainDSkLane.settimeout(0)
         return workerLst
 
     def connectToWorker(self,ipAddr):
-        sndPack = bytes((0,8,randint(0,255),0))
-        skAddr = (ipAddr,MasterBridge.MainPort)
+        self.workerAddr = (ipAddr, MasterBridge.MainPort)
+        sndPack = bytearray((0,8,randint(0,255),0,0,0))
 
-        self.mainSkLane.sendto(sndPack,skAddr)
-        self.mainSkLane.settimeout(MasterBridge.InterBy4)
         try:
-            while True:
-                data,addr = self.mainSkLane.recvfrom(MasterBridge.InitSize)
-                if addr==skAddr and data[:3]==sndPack[:3] and data[3]==1:
-                    break
-        except timeout: return
+            self.mainDSkLane.sendto(sndPack, self.workerAddr)
 
-        print("Connected")
-        self.isAlive = True
-        self.workerAddr = skAddr
-        self.mainSkLane.sendto(b"\x00\x09\x00\x00\x00\x00", self.workerAddr)
-        self.sndThread = Thread(target=self.sendLooper)
-        self.sndThread.start()
-        self.recvThread = Thread(target=self.recvLooper)
-        self.recvThread.start()
+            sndPack[3] = 1
+            self.mainDSkLane.settimeout(MasterBridge.InterBy4)
+            while True:
+                data,addr = self.mainDSkLane.recvfrom(6)
+                if addr==self.workerAddr and data[:4]==sndPack[:4]:
+                    break
+            self.dataSSkLane = socket(AF_INET, SOCK_STREAM)
+            self.dataSSkLane.settimeout(0.1)
+            self.dataSSkLane.connect((ipAddr, MasterBridge.DataPort))
+
+            sndPack[3] = 2
+            self.dataSSkLane.send(sndPack[:4] + (b"\x00" * 8))
+
+            data = recvFull(self.dataSSkLane,12)
+            if len(data)!=12 or data[:4] != sndPack[:4]:
+                raise ConnectionError("Can't establish connection")
+
+            self.isAlive = True
+            print("Connected")
+            self.sndThread = Thread(target=self.sendLooper)
+            self.sndThread.start()
+            self.recvThread = Thread(target=self.recvLooper)
+            self.recvThread.start()
+        except timeout: self.disconnectWorker()
+        except ConnectionError: self.disconnectWorker()
+
 
 
 
@@ -87,7 +101,7 @@ class MasterBridge:
                 sleep(MasterBridge.InterBy4)
                 now = time()
                 if now > self.nextBeatAt:
-                    self.mainSkLane.sendto(beatBuf,self.workerAddr)
+                    self.mainDSkLane.sendto(beatBuf, self.workerAddr)
                     self.nextBeatAt = now + MasterBridge.InterBy4
         except IOError: pass
         self.disconnectWorker()
@@ -97,7 +111,7 @@ class MasterBridge:
             return
         sndBuf = int.to_bytes(taskId, 2, 'big', signed=False) + int.to_bytes(data, 4, 'big', signed=False)
         try:
-            self.mainSkLane.sendto(sndBuf, self.workerAddr)
+            self.mainDSkLane.sendto(sndBuf, self.workerAddr)
             self.nextBeatAt = time() + MasterBridge.InterBy4
         except IOError:
             pass
@@ -105,36 +119,44 @@ class MasterBridge:
 
     def recvLooper(self):
         try:
-            self.mainSkLane.settimeout(MasterBridge.Inter)
+            self.mainDSkLane.settimeout(MasterBridge.Inter)
             lastReplayAt = -1
             while self.isConnected():
-                data,addr = self.mainSkLane.recvfrom(MasterBridge.InitSize)
+                data,addr = self.mainDSkLane.recvfrom(MasterBridge.InitSize)
                 if addr==self.workerAddr:
                     now = time()
                     # print("Delay",now - lastReplayAt)
                     lastReplayAt = now
 
                     taskId = int.from_bytes(data[:2],'big',signed=False)
-                    if taskId == 10:
+                    if taskId == 9: pass
+                    elif taskId == 10:
                         break
+                    else:
+                        print(f"Got {taskId}",int.from_bytes(data[2:],'big',signed=False))
         except timeout: pass
         self.disconnectWorker()
 
 
     def disconnectWorker(self):
-        if not self.isConnected():
+        if self.workerAddr is None:
             return
 
-        self.isAlive = False
-        if current_thread() != self.sndThread:
-            self.sndThread.join()
-        if current_thread() != self.recvThread:
-            self.recvThread.join()
-        print("Disconnected")
-        self.workerAddr = None
+        if self.dataSSkLane is not None:
+            self.dataSSkLane.close()
+            self.dataSSkLane = None
+
+        if self.isAlive:
+            self.isAlive = False
+            if self.sndThread is not None and current_thread() != self.sndThread:
+                self.sndThread.join()
+            if self.sndThread is not None and current_thread() != self.recvThread:
+                self.recvThread.join()
+            self.workerAddr = None
+            print("Disconnected")
 
     def disconnectFromWorker(self):
         if not self.isConnected():
             return
-        self.mainSkLane.sendto(b"\x00\x0A\x00\x00\x00\x00",self.workerAddr)
+        self.mainDSkLane.sendto(b"\x00\x0A\x00\x00\x00\x00", self.workerAddr)
         self.disconnectWorker()
