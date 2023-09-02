@@ -1,25 +1,43 @@
+from time import sleep,time
+from Bridge import MasterBridge,TaskManager
 
-from time import sleep
-from Bridge import MasterBridge
+def sendString(st,string:str):
+    encText = string.encode()
+    st.send(int.to_bytes(len(encText),2,'big'))
+    st.send(encText)
 
-brg = MasterBridge()
-# print(brg.searchForWorker())
-brg.connectToWorker("192.168.43.1")
-sleep(5)
-brg.disconnectFromWorker()
-sleep(2)
+class Control(TaskManager):
+    def __init__(self,ipAddr):
+        self.__brg = MasterBridge()
+        self.__ipAddr = ipAddr
 
-brg.connectToWorker("192.168.43.1")
-sleep(5)
-brg.disconnectFromWorker()
+    def isConnected(self):
+        return self.__brg.isConnected()
 
-# while brg.isConnected():
-#     try:
-#         task = int(input("Enter task to Perform: "))
-#         if task==10:
-#             break
-#         brg.sendData(task,127)
-#     except ValueError: pass
-#     except OverflowError: pass
-#
-# brg.disconnectFromWorker()
+    def connect(self):
+        if not self.isConnected():
+            self.__brg.connectToWorker(self.__ipAddr,self)
+
+    def disConnect(self):
+        if self.isConnected():
+            self.__brg.disconnectFromWorker()
+
+    def handleReplay(self, replayId, data):
+        print("\rGot Replay",replayId,data,end="\nEnter Data: ")
+
+    def handleExReplay(self):
+        print("\rGot ExReplay",self.__brg.recvExReplay(10000),end="\nEnter Data: ")
+
+    def echoInt(self,data):
+        self.__brg.sendTask(512, int(data))
+
+    def echoString(self,data):
+        self.__brg.sendExTask(513,lambda stream: sendString(stream, data))
+
+if __name__ == "__main__":
+    ctrl = Control("127.0.0.1")
+    ctrl.connect()
+
+    while ctrl.isConnected():
+        data = input("Enter Data: ")
+        ctrl.echoString(data)

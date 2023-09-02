@@ -20,5 +20,5 @@ def recvFull(sk:socket,sz):
     buf = b""
     while toRead>0:
         buf += sk.recv(toRead)
-        toRead -= len(buf)
+        toRead = sz - len(buf)
     return buf
