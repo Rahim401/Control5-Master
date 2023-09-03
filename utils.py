@@ -22,3 +22,13 @@ def recvFull(sk:socket,sz):
         buf += sk.recv(toRead)
         toRead = sz - len(buf)
     return buf
+
+def sendString(sk:socket,string:str):
+    encText = string.encode()
+    sk.send(int.to_bytes(len(encText), 2, 'big'))
+    sk.send(encText)
+
+def recvString(sk:socket):
+    strSz = int.from_bytes(recvFull(sk,2),'big',signed=True)
+    decStr = recvFull(sk,strSz).decode()
+    return decStr

@@ -1,10 +1,7 @@
 from time import sleep,time
+from utils import recvFull,sendString,recvString
 from Bridge import MasterBridge,TaskManager
 
-def sendString(st,string:str):
-    encText = string.encode()
-    st.send(int.to_bytes(len(encText),2,'big'))
-    st.send(encText)
 
 class Control(TaskManager):
     def __init__(self,ipAddr):
@@ -23,10 +20,12 @@ class Control(TaskManager):
             self.__brg.disconnectFromWorker()
 
     def handleReplay(self, replayId, data):
-        print("\rGot Replay",replayId,data,end="\nEnter Data: ")
+        print(f"\rGot Replay({replayId}):",data,end="\nEnter Data: ")
 
-    def handleExReplay(self):
-        print("\rGot ExReplay",self.__brg.recvExReplay(10000),end="\nEnter Data: ")
+    def handleExReplay(self,sk):
+        startTime = time()
+        replayId = int.from_bytes(recvFull(sk, 2), 'big', signed=True)
+        print(f"\rGot ExReplay({replayId}): {recvString(sk)} and took {time() - startTime}sec", end="\nEnter Data: ")
 
     def echoInt(self,data):
         self.__brg.sendTask(512, int(data))
@@ -35,9 +34,11 @@ class Control(TaskManager):
         self.__brg.sendExTask(513,lambda stream: sendString(stream, data))
 
 if __name__ == "__main__":
-    ctrl = Control("127.0.0.1")
+    ctrl = Control("192.168.43.1")
     ctrl.connect()
 
     while ctrl.isConnected():
         data = input("Enter Data: ")
+        if data=="exit": break
         ctrl.echoString(data)
+    ctrl.disConnect()

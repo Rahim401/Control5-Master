@@ -17,7 +17,7 @@ DisconnectTaskId = 255
 class TaskManager:
     def handleReplay(self,replayId,data):
         pass
-    def handleExReplay(self):
+    def handleExReplay(self,sk:socket):
         pass
 
 class MasterBridge:
@@ -122,7 +122,7 @@ class MasterBridge:
                     elif taskId == DisconnectTaskId: break
                     elif taskId == ExtendedTaskId:
                         if taskManager is not None:
-                            taskManager.handleExReplay()
+                            taskManager.handleExReplay(self.__eDataSSkLane)
                     else:
                         if taskManager is not None:
                             taskManager.handleReplay(
