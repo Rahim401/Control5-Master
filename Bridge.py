@@ -41,10 +41,13 @@ class MasterBridge:
         self.__nextBeatAt = -1
 
         self.__eDataSSkLane = None
-        self.__eDataWaitingList = {}
 
     def isConnected(self):
         return self.__isAlive
+    def getExStream(self):
+        if self.isConnected():
+            return
+        return self.__eDataSSkLane
 
     @staticmethod
     def __updateScanAddr():
@@ -72,7 +75,6 @@ class MasterBridge:
                 pass
         self.__mainDSkLane.settimeout(0)
         return workerLst
-
     def connectToWorker(self,ipAddr,taskManager=None):
         self.__workerAddr = (ipAddr, MasterBridge.MainPort)
         sndPack = bytearray((0,ConnectRequestTaskId,randint(0,255),0,0,0))
@@ -140,24 +142,29 @@ class MasterBridge:
                 self.__nextBeatAt = now + MasterBridge.InterBy4
         self.disconnectWorker()
 
-    def sendTask(self,taskId,data):
+    def sendTask(self,data):
         if not self.isConnected():
             return
-        sndBuf = int.to_bytes(taskId, 2, 'big', signed=False) + int.to_bytes(data, 4, 'big', signed=False)
         try:
-            self.__mainDSkLane.sendto(sndBuf, self.__workerAddr)
+            self.__mainDSkLane.sendto(data[:6]+(b"\x00"*(6-len(data))), self.__workerAddr)
             self.__nextBeatAt = time() + MasterBridge.InterBy4
         except IOError:
             pass
 
+    def sendTaskB(self,taskId,data):
+        return self.sendTask(int.to_bytes(taskId, 2, 'big', signed=False)+data)
+
+    def sendTaskI(self,taskId,data):
+        return self.sendTask(int.to_bytes(taskId, 2, 'big', signed=False)+int.to_bytes(data, 4, 'big', signed=False))
+
     def sendExTask(self,taskId,sendData):
         if not self.isConnected():
             return
-
         try:
-            self.__eDataSSkLane.send(int.to_bytes(taskId, 2, 'big', signed=False))
+            taskIdShort = int.to_bytes(taskId, 2, 'big', signed=False)
+            self.__eDataSSkLane.send(taskId)
             sendData(self.__eDataSSkLane)
-            self.__mainDSkLane.sendto(bytes((0, ExtendedTaskId)), self.__workerAddr)
+            self.__mainDSkLane.sendto(bytes((0, ExtendedTaskId))+taskIdShort, self.__workerAddr)
             self.__nextBeatAt = time() + MasterBridge.InterBy4
         except IOError:
             pass
